@@ -1,3 +1,4 @@
+;(function(){
 
     const SEA = require('./root')
     const api = {Buffer: require('./buffer')}
@@ -15,10 +16,10 @@
     })}
 
     if(SEA.window){
-      api.crypto = window.crypto || window.msCrypto
+      api.crypto = SEA.window.crypto || SEA.window.msCrypto
       api.subtle = (api.crypto||o).subtle || (api.crypto||o).webkitSubtle;
-      api.TextEncoder = window.TextEncoder;
-      api.TextDecoder = window.TextDecoder;
+      api.TextEncoder = SEA.window.TextEncoder;
+      api.TextDecoder = SEA.window.TextDecoder;
       api.random = (len) => api.Buffer.from(api.crypto.getRandomValues(new Uint8Array(api.Buffer.alloc(len))));
     }
     if(!api.TextDecoder)
@@ -40,8 +41,9 @@
       api.ossl = api.subtle = new WebCrypto({directory: 'ossl'}).subtle // ECDH
     }
     catch(e){
-      console.log("Please add `@peculiar/webcrypto` to your package.json!");
+      console.log("Please `npm install @peculiar/webcrypto` or add it to your package.json !");
     }}
 
     module.exports = api
   
+}());

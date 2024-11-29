@@ -61,11 +61,18 @@
 			for(var k in o){ if(has.call(o, k)){ l.push(k) } }
 			return l;
 		}
-		;(function(){ // max ~1ms or before stack overflow 
-			var u, sT = setTimeout, l = 0, c = 0, sI = (typeof setImmediate !== ''+u && setImmediate) || sT; // queueMicrotask faster but blocks UI
-			sT.poll = sT.poll || function(f){ //f(); return; // for testing
-				if((1 >= (+new Date - l)) && c++ < 3333){ f(); return }
-				sI(function(){ l = +new Date; f() },c=0)
+		;(function(){
+			var u, sT = setTimeout, l = 0, c = 0
+			, sI = (typeof setImmediate !== ''+u && setImmediate) || (function(c,f){
+				if(typeof MessageChannel == ''+u){ return sT }
+				(c = new MessageChannel()).port1.onmessage = function(e){ ''==e.data && f() }
+				return function(q){ f=q;c.port2.postMessage('') }
+			}()), check = sT.check = sT.check || (typeof performance !== ''+u && performance)
+			|| {now: function(){ return +new Date }};
+			sT.hold = sT.hold || 9; // half a frame benchmarks faster than < 1ms?
+			sT.poll = sT.poll || function(f){
+				if((sT.hold >= (check.now() - l)) && c++ < 3333){ f(); return }
+				sI(function(){ l = check.now(); f() },c=0)
 			}
 		}());
 		;(function(){ // Too many polls block, this "threads" them in turns over a single thread in time.
@@ -130,19 +137,235 @@
 	})(USE, './onto');
 
 	;USE(function(module){
-		USE('./shim');
-		module.exports = function(v){ // Valid values are a subset of JSON: null, binary, number (!Infinity), text, or a soul relation. Arrays need special algorithms to handle concurrency, so they are not supported directly. Use an extension that supports them if needed but research their problems first.
-			if(v === undefined){ return false }
-			if(v === null){ return true } // "deletes", nulling out keys.
-			if(v === Infinity){ return false } // we want this to be, but JSON does not support it, sad face.
-			if(v !== v){ return false } // can you guess what this checks for? ;)
-			if('string' == typeof v // text!
-			|| 'boolean' == typeof v
-			|| 'number' == typeof v){
-				return true; // simple values are valid.
+		// TODO: BUG! Unbuild will make these globals... CHANGE unbuild to wrap files in a function.
+		// Book is a replacement for JS objects, maps, dictionaries.
+		var sT = setTimeout, B = sT.Book || (sT.Book = function(text){
+			var b = function book(word, is){
+				var has = b.all[word], p;
+				if(is === undefined){ return (has && has.is) || b.get(has || word) }
+				if(has){
+					if(p = has.page){
+						p.size += size(is) - size(has.is);
+						p.text = '';
+					}
+					has.text = '';
+					has.is = is;
+					return b;
+				}
+				//b.all[word] = {is: word}; return b;
+				return b.set(word, is);
+			};
+			// TODO: if from text, preserve the separator symbol.
+			b.list = [{from: text, size: (text||'').length, substring: sub, toString: to, book: b, get: b, read: list}];
+			b.page = page;
+			b.set = set;
+			b.get = get;
+			b.all = {};
+			return b;
+		}), PAGE = 2**12;
+
+		function page(word){
+			var b = this, l = b.list, i = spot(word, l, b.parse), p = l[i];
+			if('string' == typeof p){ l[i] = p = {size: -1, first: b.parse? b.parse(p) : p, substring: sub, toString: to, book: b, get: b, read: list} } // TODO: test, how do we arrive at this condition again?
+			//p.i = i;
+			return p;
+			// TODO: BUG! What if we get the page, it turns out to be too big & split, we must then RE get the page!
+		}
+		function get(word){
+			if(!word){ return }
+			if(undefined !== word.is){ return word.is } // JS falsey values!
+			var b = this, has = b.all[word];
+			if(has){ return has.is }
+			// get does an exact match, so we would have found it already, unless parseless page:
+			var page = b.page(word), l, has, a, i;
+			if(!page || !page.from){ return } // no parseless data
+			return got(word, page);
+		}
+		function got(word, page){
+			var b = page.book, l, has, a, i;
+			if(l = from(page)){ has = l[got.i = i = spot(word, l, B.decode)]; } // TODO: POTENTIAL BUG! This assumes that each word on a page uses the same serializer/formatter/structure. // TOOD: BUG!!! Not actually, but if we want to do non-exact radix-like closest-word lookups on a page, we need to check limbo & potentially sort first.
+			// parseless may return -1 from actual value, so we may need to test both. // TODO: Double check? I think this is correct.
+			if(has && word == has.word){ return (b.all[word] = has).is }
+			if('string' != typeof has){ has = l[got.i = i+=1] }
+			if(has && word == has.word){ return (b.all[word] = has).is }
+			a = slot(has) // Escape!
+			if(word != B.decode(a[0])){
+				has = l[got.i = i+=1]; // edge case bug?
+				a = slot(has); // edge case bug?
+				if(word != B.decode(a[0])){ return }
 			}
-			if(v && ('string' == typeof (v['#']||0)) && Object.empty(v, ['#'])){ return v['#'] } // is link
-			return false; // If not, everything else remaining is an invalid data type. Custom extensions can be built on top of these primitives to support other types.
+			has = l[i] = b.all[word] = {word: ''+word, is: B.decode(a[1]), page: page, substring: subt, toString: tot}; // TODO: convert to a JS value!!! Maybe index! TODO: BUG word needs a page!!!! TODO: Check for other types!!!
+			return has.is;
+		}
+
+		function spot(word, sorted, parse){ parse = parse || spot.no || (spot.no = function(t){ return t }); // TODO: BUG???? Why is there substring()||0 ? // TODO: PERF!!! .toString() is +33% faster, can we combine it with the export?
+			var L = sorted, min = 0, page, found, l = (word=''+word).length, max = L.length, i = max/2;
+			while(((word < (page = (parse(L[i=i>>0])||'').substring())) || ((parse(L[i+1])||'').substring() <= word)) && i != min){ // L[i] <= word < L[i+1]
+				i += (page <= word)? (max - (min = i))/2 : -((max = i) - min)/2;
+			}
+			return i;
+		}
+
+		function from(a, t, l){
+			if('string' != typeof a.from){ return a.from }
+			//(l = a.from = (t = a.from||'').substring(1, t.length-1).split(t[0])); // slot
+			(l = a.from = slot(t = t||a.from||''));
+			return l;
+		}
+		function list(each){ each = each || function(x){return x} 
+			var i = 0, l = sort(this), w, r = [], p = this.book.parse || function(){};
+			//while(w = l[i++]){ r.push(each(slot(w)[1], p(w)||w, this)) }
+			while(w = l[i++]){ r.push(each(this.get(w = w.word||p(w)||w), w, this)) } // TODO: BUG! PERF?
+			return r;
+		}
+
+		function set(word, is){
+			// TODO: Perf on random write is decent, but short keys or seq seems significantly slower.
+			var b = this, has = b.all[word];
+			if(has){ return b(word, is) } // updates to in-memory items will always match exactly.
+			var page = b.page(word=''+word), tmp; // before we assume this is an insert tho, we need to check
+			if(page && page.from){ // if it could be an update to an existing word from parseless.
+				b.get(word);
+				if(b.all[word]){ return b(word, is) }
+			}
+			// MUST be an insert:
+			has = b.all[word] = {word: word, is: is, page: page, substring: subt, toString: tot};
+			page.first = (page.first < word)? page.first : word;
+			if(!page.limbo){ (page.limbo = []) }
+			page.limbo.push(has);
+			b(word, is);
+			page.size += size(word) + size(is);
+			if((b.PAGE || PAGE) < page.size){ split(page, b) }
+			return b;
+		}
+
+		function split(p, b){ // TODO: use closest hash instead of half.
+			//console.time();
+			//var S = performance.now();
+			var L = sort(p), l = L.length, i = l/2 >> 0, j = i, half = L[j], tmp;
+			//console.timeEnd();
+			var next = {first: half.substring(), size: 0, substring: sub, toString: to, book: b, get: b, read: list}, f = next.from = [];
+			while(tmp = L[i++]){
+				f.push(tmp);
+				next.size += (tmp.is||'').length||1;
+				tmp.page = next;
+			}
+			p.from = p.from.slice(0, j);
+			p.size -= next.size;
+			b.list.splice(spot(next.first, b.list)+1, 0, next); // TODO: BUG! Make sure next.first is decoded text. // TODO: BUG! spot may need parse too?
+			//console.timeEnd();
+			if(b.split){ b.split(next, p) }
+			//console.log(S = (performance.now() - S), 'split');
+			//console.BIG = console.BIG > S? console.BIG : S;
+		}
+
+		function slot(t){ return heal((t=t||'').substring(1, t.length-1).split(t[0]), t[0]) } B.slot = slot; // TODO: check first=last & pass `s`.
+		function heal(l, s){ var i, e;
+			if(0 > (i = l.indexOf(''))){ return l } // ~700M ops/sec on 4KB of Math.random()s, even faster if escape does exist.
+			if('' == l[0] && 1 == l.length){ return [] } // annoying edge cases! how much does this slow us down?
+			//if((c=i+2+parseInt(l[i+1])) != c){ return [] } // maybe still faster than below?
+			if((e=i+2+parseInt((e=l[i+1]).substring(0, e.indexOf('"'))||e)) != e){ return [] } // NaN check in JS is weird.
+			l[i] = l.slice(i, e).join(s||'|'); // rejoin the escaped value
+			return l.slice(0,i+1).concat(heal(l.slice(e), s)); // merge left with checked right.
+		}
+
+		function size(t){ return (t||'').length||1 } // bits/numbers less size? Bug or feature?
+		function subt(i,j){ return this.word }
+		//function tot(){ return this.text = this.text || "'"+(this.word)+"'"+(this.is)+"'" }
+		function tot(){ var tmp = {};
+			//if((tmp = this.page) && tmp.saving){ delete tmp.book.all[this.word]; } // TODO: BUG! Book can't know about RAD, this was from RAD, so this MIGHT be correct but we need to refactor. Make sure to add tests that will re-trigger this.
+			return this.text = this.text || ":"+B.encode(this.word)+":"+B.encode(this.is)+":";
+			tmp[this.word] = this.is;
+			return this.text = this.text || B.encode(tmp,'|',':').slice(1,-1);
+			//return this.text = this.text || "'"+(this.word)+"'"+(this.is)+"'";
+		}
+		function sub(i,j){ return (this.first||this.word||B.decode((from(this)||'')[0]||'')).substring(i,j) }
+		function to(){ return this.text = this.text || text(this) }
+		function text(p){ // PERF: read->[*] : text->"*" no edit waste 1 time perf.
+			if(p.limbo){ sort(p) } // TODO: BUG? Empty page meaning? undef, '', '||'?
+			return ('string' == typeof p.from)? p.from : '|'+(p.from||[]).join('|')+'|';
+		}
+
+		function sort(p, l){
+			var f = p.from = ('string' == typeof p.from)? slot(p.from) : p.from||[];
+			if(!(l = l || p.limbo)){ return f }
+			return mix(p).sort(function(a,b){
+				return (a.word||B.decode(''+a)) < (b.word||B.decode(''+b))? -1:1;
+			});
+		}
+		function mix(p, l){ // TODO: IMPROVE PERFORMANCE!!!! l[j] = i is 5X+ faster than .push(
+			l = l || p.limbo || []; p.limbo = null;
+			var j = 0, i, f = p.from;
+			while(i = l[j++]){
+				if(got(i.word, p)){
+					f[got.i] = i; // TODO: Trick: allow for a GUN'S HAM CRDT hook here.
+				} else {
+					f.push(i); 
+				}
+			}
+			return f;
+		}
+
+		B.encode = function(d, s, u){ s = s || "|"; u = u || String.fromCharCode(32);
+			switch(typeof d){
+				case 'string': // text
+					var i = d.indexOf(s), c = 0;
+					while(i != -1){ c++; i = d.indexOf(s, i+1) }
+					return (c?s+c:'')+ '"' + d;
+				case 'number': return (d < 0)? ''+d : '+'+d;
+				case 'boolean': return d? '+' : '-';
+				case 'object': if(!d){ return ' ' } // TODO: BUG!!! Nested objects don't slot correctly
+					var l = Object.keys(d).sort(), i = 0, t = s, k, v;
+					while(k = l[i++]){ t += u+B.encode(k,s,u)+u+B.encode(d[k],s,u)+u+s }
+					return t;
+			}
+		}
+		B.decode = function(t, s){ s = s || "|";
+			if('string' != typeof t){ return }
+			switch(t){ case ' ': return null; case '-': return false; case '+': return true; }
+			switch(t[0]){
+				case '-': case '+': return parseFloat(t);
+				case '"': return t.slice(1);
+			}
+			return t.slice(t.indexOf('"')+1);
+		}
+
+		B.hash = function(s, c){ // via SO
+			if(typeof s !== 'string'){ return }
+		  c = c || 0; // CPU schedule hashing by
+		  if(!s.length){ return c }
+		  for(var i=0,l=s.length,n; i<l; ++i){
+		    n = s.charCodeAt(i);
+		    c = ((c<<5)-c)+n;
+		    c |= 0;
+		  }
+		  return c;
+		}
+
+		function record(key, val){ return key+B.encode(val)+"%"+key.length }
+		function decord(t){
+			var o = {}, i = t.lastIndexOf("%"), c = parseFloat(t.slice(i+1));
+			o[t.slice(0,c)] = B.decode(t.slice(c,i));
+			return o;
+		}
+
+		try{module.exports=B}catch(e){}
+	})(USE, './book');
+
+	;USE(function(module){
+		// Valid values are a subset of JSON: null, binary, number (!Infinity), text,
+		// or a soul relation. Arrays need special algorithms to handle concurrency,
+		// so they are not supported directly. Use an extension that supports them if
+		// needed but research their problems first.
+		module.exports = function(v){
+		  // "deletes", nulling out keys.
+		  return v === null ||
+			"string" === typeof v ||
+			"boolean" === typeof v ||
+			// we want +/- Infinity to be, but JSON does not support it, sad face.
+			// can you guess what v === v checks for? ;)
+			("number" === typeof v && v != Infinity && v != -Infinity && v === v) ||
+			(!!v && "string" == typeof v["#"] && Object.keys(v).length === 1 && v["#"]);
 		}
 	})(USE, './valid');
 
@@ -188,6 +411,7 @@
 				var it = s[id] || (s[id] = {});
 				it.was = dup.now = +new Date;
 				if(!dup.to){ dup.to = setTimeout(dup.drop, opt.age + 9) }
+				if(dt.ed){ dt.ed(id) }
 				return it;
 			}
 			dup.drop = function(age){
@@ -274,6 +498,7 @@
 				return gun;
 			}
 			function universe(msg){
+				// TODO: BUG! msg.out = null being set!
 				//if(!F){ var eve = this; setTimeout(function(){ universe.call(eve, msg,1) },Math.random() * 100);return; } // ADD F TO PARAMS!
 				if(!msg){ return }
 				if(msg.out === universe){ this.to.next(msg); return }
@@ -305,7 +530,7 @@
 				}
 				ctx.latch = root.hatch; ctx.match = root.hatch = [];
 				var put = msg.put;
-				var DBG = ctx.DBG = msg.DBG, S = +new Date;
+				var DBG = ctx.DBG = msg.DBG, S = +new Date; CT = CT || S;
 				if(put['#'] && put['.']){ /*root && root.on('put', msg);*/ return } // TODO: BUG! This needs to call HAM instead.
 				DBG && (DBG.p = S);
 				ctx['#'] = msg['#'];
@@ -342,12 +567,14 @@
 						if(!valid(val)){ err = ERR+cut(key)+"on"+cut(soul)+"bad "+(typeof val)+cut(val); break }
 						//ctx.all++; //ctx.ack[soul+key] = '';
 						ham(val, key, soul, state, msg);
+						++C; // courtesy count;
 					}
 					if((kl = kl.slice(i)).length){ turn(pop); return }
 					++ni; kl = null; pop(o);
 				}());
 			} Gun.on.put = put;
-			console.log("BEWARE: BETA VERSION OF NEW GUN! NOT ALL FEATURES FINISHED!"); // clock below, reconnect sync, SEA certify wire merge, User.auth taking multiple times, // msg put, put, say ack, hear loop...
+			// TODO: MARK!!! clock below, reconnect sync, SEA certify wire merge, User.auth taking multiple times, // msg put, put, say ack, hear loop...
+			// WASIS BUG! local peer not ack. .off other people: .open
 			function ham(val, key, soul, state, msg){
 				var ctx = msg._||'', root = ctx.root, graph = root.graph, lot, tmp;
 				var vertex = graph[soul] || empty, was = state_is(vertex, key, 1), known = vertex[key];
@@ -360,21 +587,27 @@
 					console.STAT && console.STAT(((DBG||ctx).Hf = +new Date), tmp, 'future');
 					return;
 				}
-				if(state < was){ /*old;*/ if(!ctx.miss){ return } } // but some chains have a cache miss that need to re-fire. // TODO: Improve in future. // for AXE this would reduce rebroadcast, but GUN does it on message forwarding.
+				if(state < was){ /*old;*/ if(true || !ctx.miss){ return } } // but some chains have a cache miss that need to re-fire. // TODO: Improve in future. // for AXE this would reduce rebroadcast, but GUN does it on message forwarding. // TURNS OUT CACHE MISS WAS NOT NEEDED FOR NEW CHAINS ANYMORE!!! DANGER DANGER DANGER, ALWAYS RETURN! (or am I missing something?)
 				if(!ctx.faith){ // TODO: BUG? Can this be used for cache miss as well? // Yes this was a bug, need to check cache miss for RAD tests, but should we care about the faith check now? Probably not.
 					if(state === was && (val === known || L(val) <= L(known))){ /*console.log("same");*/ /*same;*/ if(!ctx.miss){ return } } // same
 				}
 				ctx.stun++; // TODO: 'forget' feature in SEA tied to this, bad approach, but hacked in for now. Any changes here must update there.
 				var aid = msg['#']+ctx.all++, id = {toString: function(){ return aid }, _: ctx}; id.toJSON = id.toString; // this *trick* makes it compatible between old & new versions.
+				root.dup.track(id)['#'] = msg['#']; // fixes new OK acks for RPC like RTC.
 				DBG && (DBG.ph = DBG.ph || +new Date);
-				root.on('put', {'#': id, '@': msg['@'], put: {'#': soul, '.': key, ':': val, '>': state}, _: ctx});
+				root.on('put', {'#': id, '@': msg['@'], put: {'#': soul, '.': key, ':': val, '>': state}, ok: msg.ok, _: ctx});
 			}
 			function map(msg){
 				var DBG; if(DBG = (msg._||'').DBG){ DBG.pa = +new Date; DBG.pm = DBG.pm || +new Date}
       	var eve = this, root = eve.as, graph = root.graph, ctx = msg._, put = msg.put, soul = put['#'], key = put['.'], val = put[':'], state = put['>'], id = msg['#'], tmp;
       	if((tmp = ctx.msg) && (tmp = tmp.put) && (tmp = tmp[soul])){ state_ify(tmp, key, state, val, soul) } // necessary! or else out messages do not get SEA transforms.
+      	//var bytes = ((graph[soul]||'')[key]||'').length||1;
 				graph[soul] = state_ify(graph[soul], key, state, val, soul);
-				if(tmp = (root.next||'')[soul]){ tmp.on('in', msg) }
+				if(tmp = (root.next||'')[soul]){
+					//tmp.bytes = (tmp.bytes||0) + ((val||'').length||1) - bytes;
+					//if(tmp.bytes > 2**13){ Gun.log.once('byte-limit', "Note: In the future, GUN peers will enforce a ~4KB query limit. Please see https://gun.eco/docs/Page") }
+					tmp.on('in', msg)
+				}
 				fire(ctx);
 				eve.to.next(msg);
 			}
@@ -390,27 +623,36 @@
 				if(!(msg = ctx.msg) || ctx.err || msg.err){ return }
 				msg.out = universe;
 				ctx.root.on('out', msg);
+
+				CF(); // courtesy check;
 			}
 			function ack(msg){ // aggregate ACKs.
-				var id = msg['@'] || '', ctx;
-				if(!(ctx = id._)){ return }
+				var id = msg['@'] || '', ctx, ok, tmp;
+				if(!(ctx = id._)){
+					var dup = (dup = msg.$) && (dup = dup._) && (dup = dup.root) && (dup = dup.dup);
+					if(!(dup = dup.check(id))){ return }
+					msg['@'] = dup['#'] || msg['@']; // This doesn't do anything anymore, backtrack it to something else?
+					return;
+				}
 				ctx.acks = (ctx.acks||0) + 1;
 				if(ctx.err = msg.err){
 					msg['@'] = ctx['#'];
 					fire(ctx); // TODO: BUG? How it skips/stops propagation of msg if any 1 item is error, this would assume a whole batch/resync has same malicious intent.
 				}
-				if(!ctx.stop && !ctx.crack){ ctx.crack = ctx.match && ctx.match.push(function(){back(ctx)}) } // handle synchronous acks
+				ctx.ok = msg.ok || ctx.ok;
+				if(!ctx.stop && !ctx.crack){ ctx.crack = ctx.match && ctx.match.push(function(){back(ctx)}) } // handle synchronous acks. NOTE: If a storage peer ACKs synchronously then the PUT loop has not even counted up how many items need to be processed, so ctx.STOP flags this and adds only 1 callback to the end of the PUT loop.
 				back(ctx);
 			}
 			function back(ctx){
 				if(!ctx || !ctx.root){ return }
 				if(ctx.stun || ctx.acks !== ctx.all){ return }
-				ctx.root.on('in', {'@': ctx['#'], err: ctx.err, ok: ctx.err? u : {'':1}});
+				ctx.root.on('in', {'@': ctx['#'], err: ctx.err, ok: ctx.err? u : ctx.ok || {'':1}});
 			}
 
 			var ERR = "Error: Invalid graph!";
 			var cut = function(s){ return " '"+(''+s).slice(0,9)+"...' " }
 			var L = JSON.stringify, MD = 2147483647, State = Gun.state;
+			var C = 0, CT, CF = function(){if(C>999 && (C/-(CT - (CT = +new Date))>1)){Gun.window && console.log("Warning: You're syncing 1K+ records a second, faster than DOM can update - consider limiting query.");CF=function(){C=0}}};
 
 		}());
 
@@ -418,6 +660,9 @@
 			Gun.on.get = function(msg, gun){
 				var root = gun._, get = msg.get, soul = get['#'], node = root.graph[soul], has = get['.'];
 				var next = root.next || (root.next = {}), at = next[soul];
+
+				// TODO: Azarattum bug, what is in graph is not same as what is in next. Fix!
+
 				// queue concurrent GETs?
 				// TODO: consider tagging original message into dup for DAM.
 				// TODO: ^ above? In chat app, 12 messages resulted in same peer asking for `#user.pub` 12 times. (same with #user GET too, yipes!) // DAM note: This also resulted in 12 replies from 1 peer which all had same ##hash but none of them deduped because each get was different.
@@ -438,10 +683,14 @@
 				}*/
 				var ctx = msg._||{}, DBG = ctx.DBG = msg.DBG;
 				DBG && (DBG.g = +new Date);
-				//console.log("GET:", get, node, has);
+				//console.log("GET:", get, node, has, at);
+				//if(!node && !at){ return root.on('get', msg) }
+				//if(has && node){ // replace 2 below lines to continue dev?
 				if(!node){ return root.on('get', msg) }
 				if(has){
-					if('string' != typeof has || u === node[has]){ return root.on('get', msg) }
+					if('string' != typeof has || u === node[has]){
+						if(!((at||'').next||'')[has]){ root.on('get', msg); return }
+					}
 					node = state_ify({}, has, state_is(node, has), node[has], soul);
 					// If we have a key in-memory, do we really need to fetch?
 					// Maybe... in case the in-memory key we have is a local write
@@ -484,19 +733,20 @@
 				if(!Object.plain(opt)){ opt = {} }
 				if(!Object.plain(at.opt)){ at.opt = opt }
 				if('string' == typeof tmp){ tmp = [tmp] }
+				if(!Object.plain(at.opt.peers)){ at.opt.peers = {}}
 				if(tmp instanceof Array){
-					if(!Object.plain(at.opt.peers)){ at.opt.peers = {}}
+					opt.peers = {};
 					tmp.forEach(function(url){
 						var p = {}; p.id = p.url = url;
-						at.opt.peers[url] = at.opt.peers[url] || p;
+						opt.peers[url] = at.opt.peers[url] = at.opt.peers[url] || p;
 					})
 				}
-				at.opt.peers = at.opt.peers || {};
 				obj_each(opt, function each(k){ var v = this[k];
 					if((this && this.hasOwnProperty(k)) || 'string' == typeof v || Object.empty(v)){ this[k] = v; return }
 					if(v && v.constructor !== Object && !(v instanceof Array)){ return }
 					obj_each(v, each);
 				});
+				at.opt.from = opt;
 				Gun.on('opt', at);
 				at.opt.uuid = at.opt.uuid || function uuid(l){ return Gun.state().toString(36).replace('.','') + String.random(l||12) }
 				return gun;
@@ -590,6 +840,7 @@
 				if(at.lex){ Object.keys(at.lex).forEach(function(k){ tmp[k] = at.lex[k] }, tmp = msg.get = msg.get || {}) }
 				if(get['#'] || at.soul){
 					get['#'] = get['#'] || at.soul;
+					//root.graph[get['#']] = root.graph[get['#']] || {_:{'#':get['#'],'>':{}}};
 					msg['#'] || (msg['#'] = text_rand(9)); // A3120 ?
 					back = (root.$.get(get['#'])._);
 					if(!(get = get['.'])){ // soul
@@ -923,6 +1174,7 @@
 			next[at.get = key] = at;
 			if(back === cat.root.$){
 				at.soul = key;
+				//at.put = {};
 			} else
 			if(cat.soul || cat.has){
 				at.has = key;
@@ -998,12 +1250,13 @@
 				}
 				k && (to.path || (to.path = [])).push(k);
 				if(!(v = valid(d)) && !(g = Gun.is(d))){
-					if(!Object.plain(d)){ (as.ack||noop).call(as, as.out = {err: as.err = Gun.log("Invalid data: " + ((d && (tmp = d.constructor) && tmp.name) || typeof d) + " at " + (as.via.back(function(at){at.get && tmp.push(at.get)}, tmp = []) || tmp.join('.'))+'.'+(to.path||[]).join('.'))}); as.ran(as); return }
+					if(!Object.plain(d)){ ran.err(as, "Invalid data: "+ check(d) +" at " + (as.via.back(function(at){at.get && tmp.push(at.get)}, tmp = []) || tmp.join('.'))+'.'+(to.path||[]).join('.')); return }
 					var seen = as.seen || (as.seen = []), i = seen.length;
 					while(i--){ if(d === (tmp = seen[i]).it){ v = d = tmp.link; break } }
 				}
 				if(k && v){ at.node = state_ify(at.node, k, s, d) } // handle soul later.
 				else {
+					if(!as.seen){ ran.err(as, "Data at root of graph must be a node (an object)."); return }
 					as.seen.push(cat = {it: d, link: {}, todo: g? [] : Object.keys(d).sort().reverse(), path: (to.path||[]).slice(), up: at}); // Any perf reasons to CPU schedule this .keys( ?
 					at.node = state_ify(at.node, k, s, cat.link);
 					!g && cat.todo.length && to.push(cat);
@@ -1070,9 +1323,10 @@
 		function ran(as){
 			if(as.err){ ran.end(as.stun, as.root); return } // move log handle here.
 			if(as.todo.length || as.end || !Object.empty(as.wait)){ return } as.end = 1;
+			//(as.retry = function(){ as.acks = 0;
 			var cat = (as.$.back(-1)._), root = cat.root, ask = cat.ask(function(ack){
 				root.on('ack', ack);
-				if(ack.err){ Gun.log(ack) }
+				if(ack.err && !ack.lack){ Gun.log(ack) }
 				if(++acks > (as.acks || 0)){ this.off() } // Adjustable ACKs! Only 1 by default.
 				if(!as.ack){ return }
 				as.ack(ack, this);
@@ -1083,11 +1337,16 @@
 				setTimeout.each(Object.keys(stun = stun.add||''), function(cb){ if(cb = stun[cb]){cb()} }); // resume the stunned reads // Any perf reasons to CPU schedule this .keys( ?
 			}).hatch = tmp; // this is not official yet ^
 			//console.log(1, "PUT", as.run, as.graph);
-			(as.via._).on('out', {put: as.out = as.graph, opt: as.opt, '#': ask, _: tmp});
+			if(as.ack && !as.ok){ as.ok = as.acks || 9 } // TODO: In future! Remove this! This is just old API support.
+			(as.via._).on('out', {put: as.out = as.graph, ok: as.ok && {'@': as.ok+1}, opt: as.opt, '#': ask, _: tmp});
+			//})();
 		}; ran.end = function(stun,root){
 			stun.end = noop; // like with the earlier id, cheaper to make this flag a function so below callbacks do not have to do an extra type check.
 			if(stun.the.to === stun && stun === stun.the.last){ delete root.stun }
 			stun.off();
+		}; ran.err = function(as, err){
+			(as.ack||noop).call(as, as.out = { err: as.err = Gun.log(err) });
+			as.ran(as);
 		}
 
 		function get(as){
@@ -1111,6 +1370,7 @@
 				return;
 			}
 		}
+		function check(d, tmp){ return ((d && (tmp = d.constructor) && tmp.name) || typeof d) }
 
 		var u, empty = {}, noop = function(){}, turn = setTimeout.turn, valid = Gun.valid, state_ify = Gun.state.ify;
 		var iife = function(fn,as){fn.call(as||empty)}
@@ -1123,10 +1383,29 @@
 		USE('./put');
 		USE('./get');
 		module.exports = Gun;
+	})(USE, './core');
+
+	;USE(function(module){
+		var Gun = USE('./root');
+		USE('./shim');
+		USE('./onto');
+		USE('./book');
+		USE('./valid');
+		USE('./state');
+		USE('./dup');
+		USE('./ask');
+		USE('./core');
+		USE('./on');
+		USE('./map');
+		USE('./set');
+		USE('./mesh');
+		USE('./websocket');
+		USE('./localStorage');
+		module.exports = Gun;
 	})(USE, './index');
 
 	;USE(function(module){
-		var Gun = USE('./index');
+		var Gun = USE('./root');
 		Gun.chain.on = function(tag, arg, eas, as){ // don't rewrite!
 			var gun = this, cat = gun._, root = cat.root, act, off, id, tmp;
 			if(typeof tag === 'string'){
@@ -1188,14 +1467,23 @@
 				if(eve.stun){ return } if('' === one[id]){ return }
 				if(true === (tmp = Gun.valid(data))){ once(); return }
 				if('string' == typeof tmp){ return } // TODO: BUG? Will this always load?
+				clearTimeout((cat.one||'')[id]); // clear "not found" since they only get set on cat.
 				clearTimeout(one[id]); one[id] = setTimeout(once, opt.wait||99); // TODO: Bug? This doesn't handle plural chains.
-				function once(){
+				function once(f){
 					if(!at.has && !at.soul){ at = {put: data, get: key} } // handles non-core messages.
 					if(u === (tmp = at.put)){ tmp = ((msg.$$||'')._||'').put }
-					if('string' == typeof Gun.valid(tmp)){ tmp = root.$.get(tmp)._.put; if(tmp === u){return} }
+					if('string' == typeof Gun.valid(tmp)){
+						tmp = root.$.get(tmp)._.put;
+						if(tmp === u && !f){
+							one[id] = setTimeout(function(){ once(1) }, opt.wait||99); // TODO: Quick fix. Maybe use ack count for more predictable control?
+							return
+						}
+					}
+					//console.log("AND VANISHED", data);
 					if(eve.stun){ return } if('' === one[id]){ return } one[id] = '';
 					if(cat.soul || cat.has){ eve.off() } // TODO: Plural chains? // else { ?.off() } // better than one check?
 					cb.call($, tmp, at.get);
+					clearTimeout(one[id]); // clear "not found" since they only get set on cat. // TODO: This was hackily added, is it necessary or important? Probably not, in future try removing this. Was added just as a safety for the `&& !f` check.
 				};
 			}, {on: 1});
 			return gun;
@@ -1221,6 +1509,10 @@
 				}
 			}
 			// TODO: delete cat.one[map.id]?
+			if (tmp = cat.any) {
+				delete cat.any;
+				cat.any = {};
+			}
 			if(tmp = cat.ask){
 				delete tmp[at.get];
 			}
@@ -1249,7 +1541,7 @@
 	})(USE, './on');
 
 	;USE(function(module){
-		var Gun = USE('./index'), next = Gun.chain.get.next;
+		var Gun = USE('./root'), next = Gun.chain.get.next;
 		Gun.chain.get.next = function(gun, lex){ var tmp;
 			if(!Object.plain(lex)){ return (next||noop)(gun, lex) }
 			if(tmp = ((tmp = lex['#'])||'')['='] || tmp){ return gun.get(tmp) }
@@ -1294,7 +1586,7 @@
 	})(USE, './map');
 
 	;USE(function(module){
-		var Gun = USE('./index');
+		var Gun = USE('./root');
 		Gun.chain.set = function(item, cb, opt){
 			var gun = this, root = gun.back(-1), soul, tmp;
 			cb = cb || function(){};
@@ -1320,6 +1612,11 @@
 	;USE(function(module){
 		USE('./shim');
 
+		var noop = function(){}
+		var parse = JSON.parseAsync || function(t,cb,r){ var u, d = +new Date; try{ cb(u, JSON.parse(t,r), json.sucks(+new Date - d)) }catch(e){ cb(e) } }
+		var json = JSON.stringifyAsync || function(v,cb,r,s){ var u, d = +new Date; try{ cb(u, JSON.stringify(v,r,s), json.sucks(+new Date - d)) }catch(e){ cb(e) } }
+		json.sucks = function(d){ if(d > 99){ console.log("Warning: JSON blocking CPU detected. Add `gun/lib/yson.js` to fix."); json.sucks = noop } }
+
 		function Mesh(root){
 			var mesh = function(){};
 			var opt = root.opt || {};
@@ -1329,8 +1626,6 @@
 			opt.pack = opt.pack || (opt.max * 0.01 * 0.01);
 			opt.puff = opt.puff || 9; // IDEA: do a start/end benchmark, divide ops/result.
 			var puff = setTimeout.turn || setTimeout;
-			var parse = JSON.parseAsync || function(t,cb,r){ var u; try{ cb(u, JSON.parse(t,r)) }catch(e){ cb(e) } }
-			var json = JSON.stringifyAsync || function(v,cb,r,s){ var u; try{ cb(u, JSON.stringify(v,r,s)) }catch(e){ cb(e) } }
 
 			var dup = root.dup, dup_check = dup.check, dup_track = dup.track;
 
@@ -1357,7 +1652,7 @@
 						var P = opt.puff;
 						(function go(){
 							var S = +new Date;
-							var i = 0, m; while(i < P && (m = msg[i++])){ hear(m, peer) }
+							var i = 0, m; while(i < P && (m = msg[i++])){ mesh.hear(m, peer) }
 							msg = msg.slice(i); // slicing after is faster than shifting during.
 							console.STAT && console.STAT(S, +new Date - S, 'hear loop');
 							flush(peer); // force send all synchronously batched acks.
@@ -1391,25 +1686,30 @@
 				if((tmp = msg['><']) && 'string' == typeof tmp){ tmp.slice(0,99).split(',').forEach(function(k){ this[k] = 1 }, (msg._).yo = {}) } // Peers already sent to, do not resend.
 				// DAM ^
 				if(tmp = msg.dam){
+					(dup_track(id)||{}).via = peer;
 					if(tmp = mesh.hear[tmp]){
 						tmp(msg, peer, root);
 					}
-					dup_track(id);
 					return;
 				}
+				if(tmp = msg.ok){ msg._.near = tmp['/'] }
 				var S = +new Date;
 				DBG && (DBG.is = S); peer.SI = id;
+				dup_track.ed = function(d){
+					if(id !== d){ return }
+					dup_track.ed = 0;
+					if(!(d = dup.s[id])){ return }
+					d.via = peer;
+					if(msg.get){ d.it = msg }
+				}
 				root.on('in', mesh.last = msg);
-				//ECHO = msg.put || ECHO; !(msg.ok !== -3740) && mesh.say({ok: -3740, put: ECHO, '@': msg['#']}, peer);
 				DBG && (DBG.hd = +new Date);
 				console.STAT && console.STAT(S, +new Date - S, msg.get? 'msg get' : msg.put? 'msg put' : 'msg');
-				(tmp = dup_track(id)).via = peer; // don't dedup message ID till after, cause GUN has internal dedup check.
-				if(msg.get){ tmp.it = msg }
+				dup_track(id); // in case 'in' does not call track.
 				if(ash){ dup_track(ash) } //dup.track(tmp+hash, true).it = it(msg);
 				mesh.leap = mesh.last = null; // warning! mesh.leap could be buggy.
 			}
 			var tomap = function(k,i,m){m(k,true)};
-			var noop = function(){};
 			hear.c = hear.d = 0;
 
 			;(function(){
@@ -1424,7 +1724,7 @@
 						console.STAT && console.STAT(S, +new Date - S, 'say json+hash');
 					  msg._.$put = t;
 					  msg['##'] = h;
-					  say(msg, peer);
+					  mesh.say(msg, peer);
 					  delete msg._.$put;
 					}, sort);
 				}
@@ -1443,14 +1743,15 @@
 					var DBG = msg.DBG, S = +new Date; meta.y = meta.y || S; if(!peer){ DBG && (DBG.y = S) }
 					if(!(id = msg['#'])){ id = msg['#'] = String.random(9) }
 					!loop && dup_track(id);//.it = it(msg); // track for 9 seconds, default. Earth<->Mars would need more! // always track, maybe move this to the 'after' logic if we split function.
-					if(msg.put && (msg.err || (dup.s[id]||'').err)){ return false } // TODO: in theory we should not be able to stun a message, but for now going to check if it can help network performance preventing invalid data to relay.
+					//if(msg.put && (msg.err || (dup.s[id]||'').err)){ return false } // TODO: in theory we should not be able to stun a message, but for now going to check if it can help network performance preventing invalid data to relay.
 					if(!(hash = msg['##']) && u !== msg.put && !meta.via && ack){ mesh.hash(msg, peer); return } // TODO: Should broadcasts be hashed?
-					if(!peer && ack){ peer = ((tmp = dup.s[ack]) && (tmp.via || ((tmp = tmp.it) && (tmp = tmp._) && tmp.via))) || ((tmp = mesh.last) && ack === tmp['#'] && mesh.leap) } // warning! mesh.leap could be buggy! mesh last check reduces this.
-					if(!peer && ack){ // still no peer, then ack daisy chain lost.
-						if(dup.s[ack]){ return } // in dups but no peer hints that this was ack to self, ignore.
-						console.STAT && console.STAT(+new Date, ++SMIA, 'total no peer to ack to');
+					if(!peer && ack){ peer = ((tmp = dup.s[ack]) && (tmp.via || ((tmp = tmp.it) && (tmp = tmp._) && tmp.via))) || ((tmp = mesh.last) && ack === tmp['#'] && mesh.leap) } // warning! mesh.leap could be buggy! mesh last check reduces this. // TODO: CLEAN UP THIS LINE NOW? `.it` should be reliable.
+					if(!peer && ack){ // still no peer, then ack daisy chain 'tunnel' got lost.
+						if(dup.s[ack]){ return } // in dups but no peer hints that this was ack to ourself, ignore.
+						console.STAT && console.STAT(+new Date, ++SMIA, 'total no peer to ack to'); // TODO: Delete this now. Dropping lost ACKs is protocol fine now.
 						return false;
 					} // TODO: Temporary? If ack via trace has been lost, acks will go to all peers, which trashes browser bandwidth. Not relaying the ack will force sender to ask for ack again. Note, this is technically wrong for mesh behavior.
+					if(ack && !msg.put && !hash && ((dup.s[ack]||'').it||'')['##']){ return false } // If we're saying 'not found' but a relay had data, do not bother sending our not found. // Is this correct, return false? // NOTE: ADD PANIC TEST FOR THIS!
 					if(!peer && mesh.way){ return mesh.way(msg) }
 					DBG && (DBG.yh = +new Date);
 					if(!(raw = meta.raw)){ mesh.raw(msg, peer); return }
@@ -1465,8 +1766,8 @@
 							//Type.obj.map(peer || opt.peers, each); // in case peer is a peer list.
 							loop = 1; var wr = meta.raw; meta.raw = raw; // quick perf hack
 							var i = 0, p; while(i < 9 && (p = (pl||'')[i++])){
-								if(!(p = ps[p])){ continue }
-								say(msg, p);
+								if(!(p = ps[p] || (peer||'')[p])){ continue }
+								mesh.say(msg, p);
 							}
 							meta.raw = wr; loop = 0;
 							pl = pl.slice(i); // slicing after is faster than shifting during.
@@ -1511,12 +1812,12 @@
 					var hash = msg['##'], ack = msg['@'];
 					if(hash && ack){
 						if(!meta.via && dup_check(ack+hash)){ return false } // for our own out messages, memory & storage may ack the same thing, so dedup that. Tho if via another peer, we already tracked it upon hearing, so this will always trigger false positives, so don't do that!
-						if((tmp = (dup.s[ack]||'').it) || ((tmp = mesh.last) && ack === tmp['#'])){
+						if(tmp = (dup.s[ack]||'').it){
 							if(hash === tmp['##']){ return false } // if ask has a matching hash, acking is optional.
 							if(!tmp['##']){ tmp['##'] = hash } // if none, add our hash to ask so anyone we relay to can dedup. // NOTE: May only check against 1st ack chunk, 2nd+ won't know and still stream back to relaying peers which may then dedup. Any way to fix this wasted bandwidth? I guess force rate limiting breaking change, that asking peer has to ask for next lexical chunk.
 						}
 					}
-					if(!msg.dam){
+					if(!msg.dam && !msg['@']){
 						var i = 0, to = []; tmp = opt.peers;
 						for(var k in tmp){ var p = tmp[k]; // TODO: Make it up peers instead!
 							to.push(p.url || p.pid || p.id);
@@ -1524,6 +1825,7 @@
 						}
 						if(i > 1){ msg['><'] = to.join() } // TODO: BUG! This gets set regardless of peers sent to! Detect?
 					}
+					if(msg.put && (tmp = msg.ok)){ msg.ok = {'@':(tmp['@']||1)-1, '/': (tmp['/']==msg._.near)? mesh.near : tmp['/']}; }
 					if(put = meta.$put){
 						tmp = {}; Object.keys(msg).forEach(function(k){ tmp[k] = msg[k] });
 						tmp.put = ':])([:';
@@ -1540,7 +1842,7 @@
 					function res(err, raw){
 						if(err){ return } // TODO: Handle!!
 						meta.raw = raw; //if(meta && (raw||'').length < (999 * 99)){ meta.raw = raw } // HNPERF: If string too big, don't keep in memory.
-						say(msg, peer);
+						mesh.say(msg, peer);
 					}
 				}
 			}());
@@ -1558,7 +1860,6 @@
 			}
 			// for now - find better place later.
 			function send(raw, peer){ try{
-				//console.log('SAY:', peer.id, (raw||'').slice(0,250), ((raw||'').length / 1024 / 1024).toFixed(4));
 				var wire = peer.wire;
 				if(peer.say){
 					peer.say(raw);
@@ -1571,17 +1872,22 @@
 				(peer.queue = peer.queue || []).push(raw);
 			}}
 
+			mesh.near = 0;
 			mesh.hi = function(peer){
-				var tmp = peer.wire || {};
+				var wire = peer.wire, tmp;
+				if(!wire){ mesh.wire((peer.length && {url: peer, id: peer}) || peer); return }
 				if(peer.id){
 					opt.peers[peer.url || peer.id] = peer;
 				} else {
-					tmp = peer.id = peer.id || String.random(9);
+					tmp = peer.id = peer.id || peer.url || String.random(9);
 					mesh.say({dam: '?', pid: root.opt.pid}, opt.peers[tmp] = peer);
 					delete dup.s[peer.last]; // IMPORTANT: see https://gun.eco/docs/DAM#self
 				}
-				peer.met = peer.met || +(new Date);
-				if(!tmp.hied){ root.on(tmp.hied = 'hi', peer) }
+				if(!peer.met){
+					mesh.near++;
+					peer.met = +(new Date);
+					root.on('hi', peer)
+				}
 				// @rogowski I need this here by default for now to fix go1dfish's bug
 				tmp = peer.queue; peer.queue = [];
 				setTimeout.each(tmp||[],function(msg){
@@ -1590,6 +1896,8 @@
 				//Type.obj.native && Type.obj.native(); // dirty place to check if other JS polluted.
 			}
 			mesh.bye = function(peer){
+				peer.met && --mesh.near;
+				delete peer.met;
 				root.on('bye', peer);
 				var tmp = +(new Date); tmp = (tmp - (peer.met||tmp));
 				mesh.bye.time = ((mesh.bye.time || tmp) + tmp) / 2;
@@ -1602,6 +1910,13 @@
 				}
 				mesh.say({dam: '?', pid: opt.pid, '@': msg['#']}, peer);
 				delete dup.s[peer.last]; // IMPORTANT: see https://gun.eco/docs/DAM#self
+			}
+			mesh.hear['mob'] = function(msg, peer){ // NOTE: AXE will overload this with better logic.
+				if(!msg.peers){ return }
+				var peers = Object.keys(msg.peers), one = peers[(Math.random()*peers.length) >> 0];
+				if(!one){ return }
+				mesh.bye(peer);
+				mesh.hi(one);
 			}
 
 			root.on('create', function(root){
@@ -1620,17 +1935,22 @@
 
 			var gets = {};
 			root.on('bye', function(peer, tmp){ this.to.next(peer);
-				if(tmp = console.STAT){ tmp.peers = (tmp.peers || 0) - 1; }
+				if(tmp = console.STAT){ tmp.peers = mesh.near; }
 				if(!(tmp = peer.url)){ return } gets[tmp] = true;
 				setTimeout(function(){ delete gets[tmp] },opt.lack || 9000);
 			});
 			root.on('hi', function(peer, tmp){ this.to.next(peer);
-				if(tmp = console.STAT){ tmp.peers = (tmp.peers || 0) + 1 }
-				if(!(tmp = peer.url) || !gets[tmp]){ return } delete gets[tmp];
+				if(tmp = console.STAT){ tmp.peers = mesh.near }
 				if(opt.super){ return } // temporary (?) until we have better fix/solution?
-				setTimeout.each(Object.keys(root.next), function(soul){ var node = root.next[soul]; // TODO: .keys( is slow
-					tmp = {}; tmp[soul] = root.graph[soul]; tmp = String.hash(tmp); // TODO: BUG! This is broken.
-					mesh.say({'##': tmp, get: {'#': soul}}, peer);
+				var souls = Object.keys(root.next||''); // TODO: .keys( is slow
+				if(souls.length > 9999 && !console.SUBS){ console.log(console.SUBS = "Warning: You have more than 10K live GETs, which might use more bandwidth than your screen can show - consider `.off()`.") }
+				setTimeout.each(souls, function(soul){ var node = root.next[soul];
+					if(opt.super || (node.ask||'')['']){ mesh.say({get: {'#': soul}}, peer); return }
+					setTimeout.each(Object.keys(node.ask||''), function(key){ if(!key){ return }
+						// is the lack of ## a !onion hint?
+						mesh.say({'##': String.hash((root.graph[soul]||'')[key]), get: {'#': soul, '.': key}}, peer);
+						// TODO: Switch this so Book could route?
+					})
 				});
 			});
 
@@ -1643,7 +1963,7 @@
 	})(USE, './mesh');
 
 	;USE(function(module){
-		var Gun = USE('../index');
+		var Gun = USE('./root');
 		Gun.Mesh = USE('./mesh');
 
 		// TODO: resync upon reconnect online/offline
@@ -1662,17 +1982,17 @@
 
 			var mesh = opt.mesh = opt.mesh || Gun.Mesh(root);
 
-			var wire = mesh.wire || opt.wire;
+			var wired = mesh.wire || opt.wire;
 			mesh.wire = opt.wire = open;
 			function open(peer){ try{
-				if(!peer || !peer.url){ return wire && wire(peer) }
+				if(!peer || !peer.url){ return wired && wired(peer) }
 				var url = peer.url.replace(/^http/, 'ws');
 				var wire = peer.wire = new opt.WebSocket(url);
 				wire.onclose = function(){
-					opt.mesh.bye(peer);
 					reconnect(peer);
+					opt.mesh.bye(peer);
 				};
-				wire.onerror = function(error){
+				wire.onerror = function(err){
 					reconnect(peer);
 				};
 				wire.onopen = function(){
@@ -1683,13 +2003,14 @@
 					opt.mesh.hear(msg.data || msg, peer);
 				};
 				return wire;
-			}catch(e){}}
+			}catch(e){ opt.mesh.bye(peer) }}
 
 			setTimeout(function(){ !opt.super && root.on('out', {dam:'hi'}) },1); // it can take a while to open a socket, so maybe no longer lazy load for perf reasons?
 
 			var wait = 2 * 999;
 			function reconnect(peer){
 				clearTimeout(peer.defer);
+				if(!opt.peers[peer.url]){ return }
 				if(doc && peer.retry <= 0){ return }
 				peer.retry = (peer.retry || opt.retry+1 || 60) - ((-peer.tried + (peer.tried = +new Date) < wait*4)?1:0);
 				peer.defer = setTimeout(function to(){
@@ -1711,13 +2032,18 @@
 			Gun.log("Warning: No localStorage exists to persist data to!");
 			store = {setItem: function(k,v){this[k]=v}, removeItem: function(k){delete this[k]}, getItem: function(k){return this[k]}};
 		}
+
+		var parse = JSON.parseAsync || function(t,cb,r){ var u; try{ cb(u, JSON.parse(t,r)) }catch(e){ cb(e) } }
+		var json = JSON.stringifyAsync || function(v,cb,r,s){ var u; try{ cb(u, JSON.stringify(v,r,s)) }catch(e){ cb(e) } }
+
 		Gun.on('create', function lg(root){
 			this.to.next(root);
-			var opt = root.opt, graph = root.graph, acks = [], disk, to;
+			var opt = root.opt, graph = root.graph, acks = [], disk, to, size, stop;
 			if(false === opt.localStorage){ return }
 			opt.prefix = opt.file || 'gun/';
-			try{ disk = lg[opt.prefix] = lg[opt.prefix] || JSON.parse(store.getItem(opt.prefix)) || {}; // TODO: Perf! This will block, should we care, since limited to 5MB anyways?
+			try{ disk = lg[opt.prefix] = lg[opt.prefix] || JSON.parse(size = store.getItem(opt.prefix)) || {}; // TODO: Perf! This will block, should we care, since limited to 5MB anyways?
 			}catch(e){ disk = lg[opt.prefix] = {}; }
+			size = (size||'').length;
 
 			root.on('get', function(msg){
 				this.to.next(msg);
@@ -1735,24 +2061,31 @@
 
 			root.on('put', function(msg){
 				this.to.next(msg); // remember to call next middleware adapter
-				var put = msg.put, soul = put['#'], key = put['.'], tmp; // pull data off wire envelope
+				var put = msg.put, soul = put['#'], key = put['.'], id = msg['#'], ok = msg.ok||'', tmp; // pull data off wire envelope
 				disk[soul] = Gun.state.ify(disk[soul], key, put['>'], put[':'], soul); // merge into disk object
-				if(!msg['@']){ acks.push(msg['#']) } // then ack any non-ack write. // TODO: use batch id.
+				if(stop && size > (4999880)){ root.on('in', {'@': id, err: "localStorage max!"}); return; }
+				//if(!msg['@']){ acks.push(id) } // then ack any non-ack write. // TODO: use batch id.
+				if(!msg['@'] && (!msg._.via || Math.random() < (ok['@'] / ok['/']))){ acks.push(id) } // then ack any non-ack write. // TODO: use batch id.
 				if(to){ return }
-				//flush();return;
-				to = setTimeout(flush, opt.wait || 1); // that gets saved as a whole to disk every 1ms
+				to = setTimeout(flush, 9+(size / 333)); // 0.1MB = 0.3s, 5MB = 15s 
 			});
 			function flush(){
+				if(!acks.length && ((setTimeout.turn||'').s||'').length){ setTimeout(flush,99); return; } // defer if "busy" && no saves.
 				var err, ack = acks; clearTimeout(to); to = false; acks = [];
-				try{store.setItem(opt.prefix, JSON.stringify(disk));
-				}catch(e){
-					Gun.log((err = (e || "localStorage failure")) + " Consider using GUN's IndexedDB plugin for RAD for more storage space, https://gun.eco/docs/RAD#install");
-					root.on('localStorage:error', {err: err, get: opt.prefix, put: disk});
-				}
-				if(!err && !Object.empty(opt.peers)){ return } // only ack if there are no peers. // Switch this to probabilistic mode
-				setTimeout.each(ack, function(id){
-					root.on('in', {'@': id, err: err, ok: 0}); // localStorage isn't reliable, so make its `ok` code be a low number.
-				});
+				json(disk, function(err, tmp){
+					try{!err && store.setItem(opt.prefix, tmp);
+					}catch(e){ err = stop = e || "localStorage failure" }
+					if(err){
+						Gun.log(err + " Consider using GUN's IndexedDB plugin for RAD for more storage space, https://gun.eco/docs/RAD#install");
+						root.on('localStorage:error', {err: err, get: opt.prefix, put: disk});
+					}
+					size = tmp.length;
+
+					//if(!err && !Object.empty(opt.peers)){ return } // only ack if there are no peers. // Switch this to probabilistic mode
+					setTimeout.each(ack, function(id){
+						root.on('in', {'@': id, err: err, ok: 0}); // localStorage isn't reliable, so make its `ok` code be a low number.
+					},0,99);
+				})
 			}
 		
 		});
@@ -1764,7 +2097,7 @@
 ;(function(){
 	var u;
 	if(''+u == typeof Gun){ return }
-	var DEP = function(n){ console.log("Warning! Deprecated internal utility will break in next version:", n) }
+	var DEP = function(n){ console.warn("Warning! Deprecated internal utility will break in next version:", n) }
 	// Generic javascript utilities.
 	var Type = Gun;
 	//Type.fns = Type.fn = {is: function(fn){ return (!!fn && fn instanceof Function) }}

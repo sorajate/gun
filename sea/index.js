@@ -1,6 +1,7 @@
+;(function(){
 
     var SEA = require('./sea'), S = require('./settings'), noop = function() {}, u;
-    var Gun = (''+u != typeof window)? (window.Gun||{on:noop}) : require((''+u === typeof MODULE?'.':'')+'./gun', 1);
+    var Gun = (SEA.window||'').GUN || require((''+u === typeof MODULE?'.':'')+'./gun', 1);
     // After we have a GUN extension to make user registration/login easy, we then need to handle everything else.
 
     // We do this with a GUN adapter, we first listen to when a gun instance is created (and when its options change)
@@ -66,9 +67,16 @@
       check.any(eve, msg, val, key, soul, at, no, at.user||''); return;
       eve.to.next(msg); // not handled
     }
-    check.hash = function(eve, msg, val, key, soul, at, no){
+    check.hash = function(eve, msg, val, key, soul, at, no){ // mark unbuilt @i001962 's epic hex contrib!
       SEA.work(val, null, function(data){
+        function hexToBase64(hexStr) {
+          let base64 = "";
+          for(let i = 0; i < hexStr.length; i++) {
+            base64 += !(i - 1 & 1) ? String.fromCharCode(parseInt(hexStr.substring(i - 1, i + 1), 16)) : ""}
+          return btoa(base64);}  
         if(data && data === key.split('#').slice(-1)[0]){ return eve.to.next(msg) }
+          else if (data && data === hexToBase64(key.split('#').slice(-1)[0])){ 
+          return eve.to.next(msg) }
         no("Data hash not same as hash!");
       }, {name: 'SHA-256'});
     }
@@ -100,12 +108,12 @@
                 if ((String.match(path, lex['#']) && String.match(key, lex['.'])) || (!lex['.'] && String.match(path, lex['#'])) || (!lex['#'] && String.match(key, lex['.'])) || String.match((path ? path + '/' + key : key), lex['#'] || lex)) {
                   // is Certificant forced to present in Path
                   if (lex['+'] && lex['+'].indexOf('*') > -1 && path && path.indexOf(certificant) == -1 && key.indexOf(certificant) == -1) return no(`Path "${path}" or key "${key}" must contain string "${certificant}".`)
-                  // path is allowed, but is there any WRITE blacklist? Check it out
-                  if (data.wb && (typeof data.wb === 'string' || ((data.wb || {})['#']))) { // "data.wb" = path to the WRITE blacklist
-                    var root = at.$.back(-1)
+                  // path is allowed, but is there any WRITE block? Check it out
+                  if (data.wb && (typeof data.wb === 'string' || ((data.wb || {})['#']))) { // "data.wb" = path to the WRITE block
+                    var root = eve.as.root.$.back(-1)
                     if (typeof data.wb === 'string' && '~' !== data.wb.slice(0, 1)) root = root.get('~' + pub)
-                    return root.get(data.wb).get(certificant).once(value => {
-                      if (value && (value === 1 || value === true)) return no("Certificant blacklisted.")
+                    return root.get(data.wb).get(certificant).once(value => { // TODO: INTENT TO DEPRECATE.
+                      if (value && (value === 1 || value === true)) return no(`Certificant ${certificant} blocked.`)
                       return cb(data)
                     })
                   }
@@ -239,3 +247,4 @@
     // TODO: Potential bug? If pub/priv key starts with `-`? IDK how possible.
 
   
+}());

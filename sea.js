@@ -19,6 +19,7 @@
     // IT IS IMPLEMENTED IN A POLYFILL/SHIM APPROACH.
     // THIS IS AN EARLY ALPHA!
 
+    if(typeof self !== "undefined"){ module.window = self } // should be safe for at least browser/worker/nodejs, need to check other envs like RN etc.
     if(typeof window !== "undefined"){ module.window = window }
 
     var tmp = module.window || module, u;
@@ -36,7 +37,9 @@
       if(location.protocol.indexOf('s') < 0
       && location.host.indexOf('localhost') < 0
       && ! /^127\.\d+\.\d+\.\d+$/.test(location.hostname)
-      && location.protocol.indexOf('file:') < 0){
+      && location.protocol.indexOf('blob:') < 0
+      && location.protocol.indexOf('file:') < 0
+      && location.origin != 'null'){
         console.warn('HTTPS needed for WebCrypto in SEA, redirecting...');
         location.protocol = 'https:'; // WebCrypto does NOT work without HTTPS!
       }
@@ -47,7 +50,7 @@
     var u;
     if(u+''== typeof btoa){
       if(u+'' == typeof Buffer){
-        try{ global.Buffer = USE("buffer", 1).Buffer }catch(e){ console.log("Please add `buffer` to your package.json!") }
+        try{ global.Buffer = USE("buffer", 1).Buffer }catch(e){ console.log("Please `npm install buffer` or add it to your package.json !") }
       }
       global.btoa = function(data){ return Buffer.from(data, "binary").toString("base64") };
       global.atob = function(data){ return Buffer.from(data, "base64").toString("binary") };
@@ -177,10 +180,10 @@
     })}
 
     if(SEA.window){
-      api.crypto = window.crypto || window.msCrypto
+      api.crypto = SEA.window.crypto || SEA.window.msCrypto
       api.subtle = (api.crypto||o).subtle || (api.crypto||o).webkitSubtle;
-      api.TextEncoder = window.TextEncoder;
-      api.TextDecoder = window.TextDecoder;
+      api.TextEncoder = SEA.window.TextEncoder;
+      api.TextDecoder = SEA.window.TextDecoder;
       api.random = (len) => api.Buffer.from(api.crypto.getRandomValues(new Uint8Array(api.Buffer.alloc(len))));
     }
     if(!api.TextDecoder)
@@ -202,7 +205,7 @@
       api.ossl = api.subtle = new WebCrypto({directory: 'ossl'}).subtle // ECDH
     }
     catch(e){
-      console.log("Please add `@peculiar/webcrypto` to your package.json!");
+      console.log("Please `npm install @peculiar/webcrypto` or add it to your package.json !");
     }}
 
     module.exports = api
@@ -475,7 +478,7 @@
     }});
 
     module.exports = SEA.verify;
-    // legacy & ossl leak mitigation:
+    // legacy & ossl memory leak mitigation:
 
     var knownKeys = {};
     var keyForPair = SEA.opt.slow_leak = pair => {
@@ -674,23 +677,21 @@
     // This is to certify that a group of "certificants" can "put" anything at a group of matched "paths" to the certificate authority's graph
     SEA.certify = SEA.certify || (async (certificants, policy = {}, authority, cb, opt = {}) => { try {
       /*
+      The Certify Protocol was made out of love by a Vietnamese code enthusiast. Vietnamese people around the world deserve respect!
       IMPORTANT: A Certificate is like a Signature. No one knows who (authority) created/signed a cert until you put it into their graph.
       "certificants": '*' or a String (Bob.pub) || an Object that contains "pub" as a key || an array of [object || string]. These people will have the rights.
       "policy": A string ('inbox'), or a RAD/LEX object {'*': 'inbox'}, or an Array of RAD/LEX objects or strings. RAD/LEX object can contain key "?" with indexOf("*") > -1 to force key equals certificant pub. This rule is used to check against soul+'/'+key using Gun.text.match or String.match.
       "authority": Key pair or priv of the certificate authority.
       "cb": A callback function after all things are done.
-      "opt": If opt.expiry (a timestamp) is set, SEA won't sync data after opt.expiry. If opt.blacklist is set, SEA will look for blacklist before syncing.
+      "opt": If opt.expiry (a timestamp) is set, SEA won't sync data after opt.expiry. If opt.block is set, SEA will look for block before syncing.
       */
       console.log('SEA.certify() is an early experimental community supported method that may change API behavior without warning in any future version.')
 
       certificants = (() => {
         var data = []
         if (certificants) {
-          if ((typeof certificants === 'string' || Array.isArray(certificants)) && certificants.indexOf('*') !== -1) return '*'
-          if (typeof certificants === 'string') {
-            return certificants
-          }
-
+          if ((typeof certificants === 'string' || Array.isArray(certificants)) && certificants.indexOf('*') > -1) return '*'
+          if (typeof certificants === 'string') return certificants
           if (Array.isArray(certificants)) {
             if (certificants.length === 1 && certificants[0]) return typeof certificants[0] === 'object' && certificants[0].pub ? certificants[0].pub : typeof certificants[0] === 'string' ? certificants[0] : null
             certificants.map(certificant => {
@@ -702,7 +703,7 @@
           if (typeof certificants === 'object' && certificants.pub) return certificants.pub
           return data.length > 0 ? data : null
         }
-        return null
+        return
       })()
 
       if (!certificants) return console.log("No certificant found.")
@@ -710,8 +711,11 @@
       const expiry = opt.expiry && (typeof opt.expiry === 'number' || typeof opt.expiry === 'string') ? parseFloat(opt.expiry) : null
       const readPolicy = (policy || {}).read ? policy.read : null
       const writePolicy = (policy || {}).write ? policy.write : typeof policy === 'string' || Array.isArray(policy) || policy["+"] || policy["#"] || policy["."] || policy["="] || policy["*"] || policy[">"] || policy["<"] ? policy : null
-      const readBlacklist = ((opt || {}).blacklist || {}).read && (typeof opt.blacklist.read === 'string' || opt.blacklist.read['#']) ? opt.blacklist.read : null
-      const writeBlacklist = typeof (opt || {}).blacklist === 'string' || (((opt || {}).blacklist || {}).write || {})['#'] ? opt.blacklist : ((opt || {}).blacklist || {}).write && (typeof opt.blacklist.write === 'string' || opt.blacklist.write['#']) ? opt.blacklist.write : null
+      // The "blacklist" feature is now renamed to "block". Why ? BECAUSE BLACK LIVES MATTER!
+      // We can now use 3 keys: block, blacklist, ban
+      const block = (opt || {}).block || (opt || {}).blacklist || (opt || {}).ban || {}
+      const readBlock = block.read && (typeof block.read === 'string' || (block.read || {})['#']) ? block.read : null
+      const writeBlock = typeof block === 'string' ? block : block.write && (typeof block.write === 'string' || block.write['#']) ? block.write : null
 
       if (!readPolicy && !writePolicy) return console.log("No policy found.")
 
@@ -721,8 +725,8 @@
         ...(expiry ? {e: expiry} : {}), // inject expiry if possible
         ...(readPolicy ? {r: readPolicy }  : {}), // "r" stands for read, which means read permission.
         ...(writePolicy ? {w: writePolicy} : {}), // "w" stands for write, which means write permission.
-        ...(readBlacklist ? {rb: readBlacklist} : {}), // inject READ blacklist if possible
-        ...(writeBlacklist ? {wb: writeBlacklist} : {}), // inject WRITE blacklist if possible
+        ...(readBlock ? {rb: readBlock} : {}), // inject READ block if possible
+        ...(writeBlock ? {wb: writeBlock} : {}), // inject WRITE block if possible
       })
 
       const certificate = await SEA.sign(data, authority, null, {raw:1})
@@ -843,7 +847,7 @@
   })(USE, './user');
 
   ;USE(function(module){
-    var u, Gun = (''+u != typeof window)? (window.Gun||{chain:{}}) : USE((''+u === typeof MODULE?'.':'')+'./gun', 1);
+    var u, Gun = (''+u != typeof GUN)? (GUN||{chain:{}}) : USE((''+u === typeof MODULE?'.':'')+'./gun', 1);
     Gun.chain.then = function(cb, opt){
       var gun = this, p = (new Promise(function(res, rej){
         gun.once(res, opt);
@@ -934,7 +938,7 @@
         if(!act.h.ok || !act.i.ok){ return }
         cat.ing = false;
         cb({ok: 0, pub: act.pair.pub}); // callback that the user has been created. (Note: ok = 0 because we didn't wait for disk to ack)
-        if(noop === cb){ pair? gun.auth(pair) : gun.auth(alias, pass) } // if no callback is passed, auto-login after signing up.
+        if(noop === cb){ pair ? gun.auth(pair) : gun.auth(alias, pass) } // if no callback is passed, auto-login after signing up.
       }
       root.get('~@'+alias).once(act.a);
       return gun;
@@ -948,7 +952,7 @@
       }
       if(SEA.window){
         try{var sS = {};
-        sS = window.sessionStorage;
+        sS = SEA.window.sessionStorage;
         delete sS.recall;
         delete sS.pair;
         }catch(e){};
@@ -963,10 +967,11 @@
     User.prototype.auth = function(...args){ // TODO: this PR with arguments need to be cleaned up / refactored.
       var pair = typeof args[0] === 'object' && (args[0].pub || args[0].epub) ? args[0] : typeof args[1] === 'object' && (args[1].pub || args[1].epub) ? args[1] : null;
       var alias = !pair && typeof args[0] === 'string' ? args[0] : null;
-      var pass = alias && typeof args[1] === 'string' ? args[1] : null;
+      var pass = (alias || (pair && !(pair.priv && pair.epriv))) && typeof args[1] === 'string' ? args[1] : null;
       var cb = args.filter(arg => typeof arg === 'function')[0] || null; // cb now can stand anywhere, after alias/pass or pair
       var opt = args && args.length > 1 && typeof args[args.length-1] === 'object' ? args[args.length-1] : {}; // opt is always the last parameter which typeof === 'object' and stands after cb
-      
+      var retries = typeof opt.retries === 'number' ? opt.retries : 9;
+
       var gun = this, cat = (gun._), root = gun.back(-1);
       
       if(cat.ing){
@@ -989,6 +994,10 @@
         var get = (act.list = (act.list||[]).concat(list||[])).shift();
         if(u === get){
           if(act.name){ return act.err('Your user account is not published for dApps to access, please consider syncing it online, or allowing local access by adding your device as a peer.') }
+          if(alias && retries--){
+            root.get('~@'+alias).once(act.a);
+            return;
+          }
           return act.err('Wrong user or password.') 
         }
         root.get(get).once(act.a);
@@ -1025,7 +1034,7 @@
         at = user._ = root.get('~'+pair.pub)._;
         at.opt = upt;
         // add our credentials in-memory only to our root user instance
-        user.is = {pub: pair.pub, epub: pair.epub, alias: alias || pair};
+        user.is = {pub: pair.pub, epub: pair.epub, alias: alias || pair.pub};
         at.sea = act.pair;
         cat.ing = false;
         try{if(pass && u == (obj_ify(cat.root.graph['~'+pair.pub].auth)||'')[':']){ opt.shuffle = opt.change = pass; } }catch(e){} // migrate UTF8 & Shuffle!
@@ -1033,7 +1042,7 @@
         if(SEA.window && ((gun.back('user')._).opt||opt).remember){
           // TODO: this needs to be modular.
           try{var sS = {};
-          sS = window.sessionStorage;
+          sS = SEA.window.sessionStorage; // TODO: FIX BUG putting on `.is`!
           sS.recall = true;
           sS.pair = JSON.stringify(pair); // auth using pair is more reliable than alias/pass
           }catch(e){}
@@ -1046,6 +1055,17 @@
         }catch(e){
           Gun.log("Your 'auth' callback crashed with:", e);
         }
+      }
+      act.h = function(data){
+        if(!data){ return act.b() }
+        alias = data.alias
+        if(!alias)
+          alias = data.alias = "~" + pair.pub        
+        if(!data.auth){
+          return act.g(pair);
+        }
+        pair = null;
+        act.c((act.data = data).auth);
       }
       act.z = function(){
         // password update so encrypt private key using new pwd + salt
@@ -1083,7 +1103,10 @@
         act.b(tmp);
       }
       if(pair){
-        act.g(pair);
+        if(pair.priv && pair.epriv)
+          act.g(pair);
+        else
+          root.get('~'+pair.pub).once(act.h);
       } else
       if(alias){
         root.get('~@'+alias).once(act.a);
@@ -1110,7 +1133,7 @@
         if(SEA.window){
           try{
             var sS = {};
-            sS = window.sessionStorage;
+            sS = SEA.window.sessionStorage; // TODO: FIX BUG putting on `.is`!
             if(sS){
               (root._).opt.remember = true;
               ((gun.back('user')._).opt||opt).remember = true;
@@ -1268,7 +1291,7 @@
 
   ;USE(function(module){
     var SEA = USE('./sea'), S = USE('./settings'), noop = function() {}, u;
-    var Gun = (''+u != typeof window)? (window.Gun||{on:noop}) : USE((''+u === typeof MODULE?'.':'')+'./gun', 1);
+    var Gun = (SEA.window||'').GUN || USE((''+u === typeof MODULE?'.':'')+'./gun', 1);
     // After we have a GUN extension to make user registration/login easy, we then need to handle everything else.
 
     // We do this with a GUN adapter, we first listen to when a gun instance is created (and when its options change)
@@ -1334,9 +1357,16 @@
       check.any(eve, msg, val, key, soul, at, no, at.user||''); return;
       eve.to.next(msg); // not handled
     }
-    check.hash = function(eve, msg, val, key, soul, at, no){
+    check.hash = function(eve, msg, val, key, soul, at, no){ // mark unbuilt @i001962 's epic hex contrib!
       SEA.work(val, null, function(data){
+        function hexToBase64(hexStr) {
+          let base64 = "";
+          for(let i = 0; i < hexStr.length; i++) {
+            base64 += !(i - 1 & 1) ? String.fromCharCode(parseInt(hexStr.substring(i - 1, i + 1), 16)) : ""}
+          return btoa(base64);}  
         if(data && data === key.split('#').slice(-1)[0]){ return eve.to.next(msg) }
+          else if (data && data === hexToBase64(key.split('#').slice(-1)[0])){ 
+          return eve.to.next(msg) }
         no("Data hash not same as hash!");
       }, {name: 'SHA-256'});
     }
@@ -1359,7 +1389,7 @@
             if (u !== data && u !== data.e && msg.put['>'] && msg.put['>'] > parseFloat(data.e)) return no("Certificate expired.") // certificate expired
             // "data.c" = a list of certificants/certified users
             // "data.w" = lex WRITE permission, in the future, there will be "data.r" which means lex READ permission
-            if (u !== data && data.c && data.w && (data.c === certificant || data.c.indexOf('*' || certificant) > -1)) {
+            if (u !== data && data.c && data.w && (data.c === certificant || data.c.indexOf('*') > -1 || data.c.indexOf(certificant) > -1)) {
               // ok, now "certificant" is in the "certificants" list, but is "path" allowed? Check path
               let path = soul.indexOf('/') > -1 ? soul.replace(soul.substring(0, soul.indexOf('/') + 1), '') : ''
               String.match = String.match || Gun.text.match
@@ -1368,12 +1398,12 @@
                 if ((String.match(path, lex['#']) && String.match(key, lex['.'])) || (!lex['.'] && String.match(path, lex['#'])) || (!lex['#'] && String.match(key, lex['.'])) || String.match((path ? path + '/' + key : key), lex['#'] || lex)) {
                   // is Certificant forced to present in Path
                   if (lex['+'] && lex['+'].indexOf('*') > -1 && path && path.indexOf(certificant) == -1 && key.indexOf(certificant) == -1) return no(`Path "${path}" or key "${key}" must contain string "${certificant}".`)
-                  // path is allowed, but is there any WRITE blacklist? Check it out
-                  if (data.wb && (typeof data.wb === 'string' || ((data.wb || {})['#']))) { // "data.wb" = path to the WRITE blacklist
-                    var root = at.$.back(-1)
+                  // path is allowed, but is there any WRITE block? Check it out
+                  if (data.wb && (typeof data.wb === 'string' || ((data.wb || {})['#']))) { // "data.wb" = path to the WRITE block
+                    var root = eve.as.root.$.back(-1)
                     if (typeof data.wb === 'string' && '~' !== data.wb.slice(0, 1)) root = root.get('~' + pub)
-                    return root.get(data.wb).get(certificant).once(value => {
-                      if (value && (value === 1 || value === true)) return no("Certificant blacklisted.")
+                    return root.get(data.wb).get(certificant).once(value => { // TODO: INTENT TO DEPRECATE.
+                      if (value && (value === 1 || value === true)) return no(`Certificant ${certificant} blocked.`)
                       return cb(data)
                     })
                   }

@@ -1,3 +1,4 @@
+;(function(){
 
     var shim = require('./shim');
     // Practical examples about usage found in tests.
@@ -56,3 +57,4 @@
     // -------------- END SEA MODULES --------------------
     // -- BEGIN SEA+GUN MODULES: BUNDLED BY DEFAULT UNTIL OTHERS USE SEA ON OWN -------
   
+}());

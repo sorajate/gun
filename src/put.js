@@ -1,3 +1,4 @@
+;(function(){
 
 var Gun = require('./root');
 Gun.chain.put = function(data, cb, as){ // I rewrote it :)
@@ -28,12 +29,13 @@ Gun.chain.put = function(data, cb, as){ // I rewrote it :)
 		}
 		k && (to.path || (to.path = [])).push(k);
 		if(!(v = valid(d)) && !(g = Gun.is(d))){
-			if(!Object.plain(d)){ (as.ack||noop).call(as, as.out = {err: as.err = Gun.log("Invalid data: " + ((d && (tmp = d.constructor) && tmp.name) || typeof d) + " at " + (as.via.back(function(at){at.get && tmp.push(at.get)}, tmp = []) || tmp.join('.'))+'.'+(to.path||[]).join('.'))}); as.ran(as); return }
+			if(!Object.plain(d)){ ran.err(as, "Invalid data: "+ check(d) +" at " + (as.via.back(function(at){at.get && tmp.push(at.get)}, tmp = []) || tmp.join('.'))+'.'+(to.path||[]).join('.')); return }
 			var seen = as.seen || (as.seen = []), i = seen.length;
 			while(i--){ if(d === (tmp = seen[i]).it){ v = d = tmp.link; break } }
 		}
 		if(k && v){ at.node = state_ify(at.node, k, s, d) } // handle soul later.
 		else {
+			if(!as.seen){ ran.err(as, "Data at root of graph must be a node (an object)."); return }
 			as.seen.push(cat = {it: d, link: {}, todo: g? [] : Object.keys(d).sort().reverse(), path: (to.path||[]).slice(), up: at}); // Any perf reasons to CPU schedule this .keys( ?
 			at.node = state_ify(at.node, k, s, cat.link);
 			!g && cat.todo.length && to.push(cat);
@@ -100,9 +102,10 @@ function stun(as, id){
 function ran(as){
 	if(as.err){ ran.end(as.stun, as.root); return } // move log handle here.
 	if(as.todo.length || as.end || !Object.empty(as.wait)){ return } as.end = 1;
+	//(as.retry = function(){ as.acks = 0;
 	var cat = (as.$.back(-1)._), root = cat.root, ask = cat.ask(function(ack){
 		root.on('ack', ack);
-		if(ack.err){ Gun.log(ack) }
+		if(ack.err && !ack.lack){ Gun.log(ack) }
 		if(++acks > (as.acks || 0)){ this.off() } // Adjustable ACKs! Only 1 by default.
 		if(!as.ack){ return }
 		as.ack(ack, this);
@@ -113,11 +116,16 @@ function ran(as){
 		setTimeout.each(Object.keys(stun = stun.add||''), function(cb){ if(cb = stun[cb]){cb()} }); // resume the stunned reads // Any perf reasons to CPU schedule this .keys( ?
 	}).hatch = tmp; // this is not official yet ^
 	//console.log(1, "PUT", as.run, as.graph);
-	(as.via._).on('out', {put: as.out = as.graph, opt: as.opt, '#': ask, _: tmp});
+	if(as.ack && !as.ok){ as.ok = as.acks || 9 } // TODO: In future! Remove this! This is just old API support.
+	(as.via._).on('out', {put: as.out = as.graph, ok: as.ok && {'@': as.ok+1}, opt: as.opt, '#': ask, _: tmp});
+	//})();
 }; ran.end = function(stun,root){
 	stun.end = noop; // like with the earlier id, cheaper to make this flag a function so below callbacks do not have to do an extra type check.
 	if(stun.the.to === stun && stun === stun.the.last){ delete root.stun }
 	stun.off();
+}; ran.err = function(as, err){
+	(as.ack||noop).call(as, as.out = { err: as.err = Gun.log(err) });
+	as.ran(as);
 }
 
 function get(as){
@@ -141,7 +149,9 @@ function get(as){
 		return;
 	}
 }
+function check(d, tmp){ return ((d && (tmp = d.constructor) && tmp.name) || typeof d) }
 
 var u, empty = {}, noop = function(){}, turn = setTimeout.turn, valid = Gun.valid, state_ify = Gun.state.ify;
 var iife = function(fn,as){fn.call(as||empty)}
 	
+}());

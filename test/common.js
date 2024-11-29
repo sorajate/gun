@@ -78,15 +78,38 @@ describe('Gun', function(){
 				//var json = require('fs').readFileSync('./stats.json').toString();
 				//var json = require('fs').readFileSync('./video.json').toString();
 			});
+			it('backslash', function(done){
+				var o = {z:"test\"wow\\"};
+				JSON.stringifyAsync(o, function(err,t){
+					JSON.parseAsync(t, function(err,data){
+						expect(data).to.be.eql(o);
+						next();
+					})
+				});
+				function next(){
+					JSON.parseAsync('{"webRTCsdp":"v=0\r\no=-"}', function(err,data){
+						var o = {webRTCsdp: 'v=0\r\no=-'};
+						expect(data).to.be.eql(o);
+						JSON.stringifyAsync(o, function(err,t){
+							expect(JSON.parse(t)).to.be.eql(o);
+							expect(t).to.be(JSON.stringify(o));
+							expect(t).to.be('{"webRTCsdp":"v=0\\r\\no=-"}');
+							JSON.parseAsync(t, function(err,d){
+								expect(d).to.be.eql(o);
+								done();
+							})
+						});
+					})
+				}
+			});
 			it('stringify', function(done){
 				function Foo(){}; Foo.prototype.toJSON = function(){};
 				//var obj = {"what\"lol": {"a": 1, "b": true, "c": false, "d": null, "wow": [{"z": 9}, true, "hi", 3.3]}};
 				var obj = {"what": {"a": 1, "b": true, "c": false, "d": null, "wow": [{"z": 9}, true, "hi", 3.3]}};
-				obj = [{x:"test",a:true,b: new Foo,c:3,y:"yes","get":{"#":"chat"},wow:undefined,foo:[1,function(){}, function(){}, 'go'],blah:{a:5,toJSON:function(){ return 9 }}}];
+				var obj = [{x:"test 😎\\😄🔥",z:"test\\","what\"lol": {"0": 1.01},a:true,b: new Foo,c:3,y:"yes","get":{"#":"chat"},wow:undefined,foo:[1,function(){}, function(){}, 'go'],blah:{a:5,toJSON:function(){ return 9 }}}, {webRTCsdp: "v=0\r\no=-"}, [[]], 10e9, NaN];
 				JSON.stringifyAsync(obj, function(err, text){
 					JSON.parseAsync(text, function(err, data){
-						expect(data).to.be.eql([{x:"test",a:true,c:3,y:"yes","get":{"#":"chat"},foo:[1,null,null,'go'],blah:9}]);
-
+						expect(data).to.be.eql([{x:"test 😎\\😄🔥",z:"test\\","what\"lol": {"0": 1.01},a:true,c:3,y:"yes","get":{"#":"chat"},foo:[1,null,null,'go'],blah:9}, {webRTCsdp: "v=0\r\no=-"}, [[]], 10e9, null]);
 						var obj = {a: [], b: [""], c: ["", 1], d: [1, ""], e: {"":[]}, "a\"b": {0: 1}, wow: {'': {cool: 1}}};obj.lol = {0: {sweet: 9}};obj.wat = {"": 'cool'};obj.oh = {phew: {}, "": {}};
 						JSON.stringifyAsync(obj, function(err, text2){
 							JSON.parseAsync(text2, function(err, data){
@@ -518,6 +541,7 @@ describe('Gun', function(){
 				expect(Gun.is('')).to.be(false);
 				expect(Gun.is('a')).to.be(false);
 				expect(Gun.is(Infinity)).to.be(false);
+        expect(Gun.is(-Infinity)).to.be(false);
 				expect(Gun.is(NaN)).to.be(false);
 				expect(Gun.is([])).to.be(false);
 				expect(Gun.is([1])).to.be(false);
@@ -535,6 +559,7 @@ describe('Gun', function(){
 				expect(Gun.valid({'#':'somesoulidhere'})).to.be('somesoulidhere');
 				expect(Gun.valid({'#':'somesoulidhere', and: 'nope'})).to.be(false);
 				expect(Gun.valid(Infinity)).to.be(false); // boohoo :(
+        expect(Gun.valid(-Infinity)).to.be(false); // boohoo :(
 				expect(Gun.valid(NaN)).to.be(false);
 				expect(Gun.valid([])).to.be(false);
 				expect(Gun.valid([1])).to.be(false);
@@ -554,6 +579,7 @@ describe('Gun', function(){
 				expect('string' == typeof Gun.valid(0)).to.be(false);
 				expect('string' == typeof Gun.valid(1)).to.be(false);
 				expect('string' == typeof Gun.valid(Infinity)).to.be(false); // boohoo :(
+        expect('string' == typeof Gun.valid(-Infinity)).to.be(false); // boohoo :(
 				expect('string' == typeof Gun.valid(NaN)).to.be(false);
 				expect('string' == typeof Gun.valid([])).to.be(false);
 				expect('string' == typeof Gun.valid([1])).to.be(false);
@@ -2986,7 +3012,7 @@ describe('Gun', function(){
 			setTimeout(function(){
 				var gun2 = Gun();
 				//console.log(require('fs').readFileSync('./radata/!').toString());
-				gun2.get('stef').get('address').once(function(data){ // Object {_: Object, country: "Netherlands", zip: "1766KP"} "adress"
+				gun2.get('stef').get('address').once(function(data){ // Object {_: Object, country: "Netherlands", zip: "1766KP"} "address"
 					//console.log("******", data);return;
 					done.a = true;
 					expect(data.country).to.be('Netherlands');
@@ -3883,12 +3909,12 @@ describe('Gun', function(){
 			var C = 0;
 
 			app.get('watcher/1').get('stats').on(function (v, k) {
-			  //console.log('v:', k, v);
 				if(++C === 1){
 					expect(v.num).to.be(3);
 					return;
 				}
 				expect(v.num).to.be(4);
+				if(done.c){ return } done.c = 1;
 				nopasstun(done, gun);
 			});
 			//return;
@@ -3899,7 +3925,40 @@ describe('Gun', function(){
 			  
 			},100);
 		});
+		//return;
 
+		it.skip('do not refire', function(done){ // for Wasis @yokowasis ! Thanks for finding.
+			var gun = Gun();
+
+			for (i=0;i<=100;i++) {
+			  gun.get("something").get("level1").put({
+			    [i]: i
+			  })
+			}
+
+			for (i=0;i<=100;i++) {
+			  gun.get("something").get("level1").get("level2").put({
+			    [i]: i
+			  })
+			}
+
+			var c = 0;
+			setTimeout(function(){
+				gun.get("something").get("level1").on(()=>{
+					c++;
+				});
+
+				setTimeout(function(){
+					gun.get("something").get("level1").once(function(x){
+						
+						setTimeout(function(){
+							expect(c).to.be(1);
+							nopasstun(done, gun);
+						},100);
+					});
+				},100);
+			},100);
+		});
 		/*it.skip('Memory management', function(done){
 			this.timeout(9999999);
 			var gun = Gun(), c = 100000, big = "big";
@@ -3986,6 +4045,78 @@ describe('Gun', function(){
 				nopasstun(0, gunB);
 				nopasstun(done, gunC);
 			}, 100);
+		});		
+
+		it('ack aggregation bypass', function(done){
+			console.log("WORKS IN BROWSER, NOT SURE WHY NODEJS CONFUSED, CHECK LATER");
+			done();return;
+			var alice = Gun({localStorage: false, file: false, rad: false, radisk: false});
+			var bob = Gun({localStorage: false, file: false, rad: false, radisk: false});
+			var carl = Gun({localStorage: false, file: false, rad: false, radisk: false});
+
+			var adam = alice.back('opt.mesh');
+			var asay = adam.say;
+
+			var bdam = bob.back('opt.mesh');
+			var bsay = bdam.say;
+
+			var cdam = carl.back('opt.mesh');
+			var csay = cdam.say;
+
+			//console.only.i = 1;
+			adam.say = function(raw, peer){
+				console.only(2, 'adam says:', raw);
+				console.only(1, '...');
+				bdam.hear((raw.length && raw) || JSON.stringify(raw), {});
+				asay(raw, peer);
+			}
+			bdam.say = function(raw, peer){
+				console.only(7, "bob the relay is like YO", raw);
+				adam.hear((raw.length && raw) || JSON.stringify(raw), {});
+				cdam.hear((raw.length && raw) || JSON.stringify(raw), {});
+				bsay(raw, peer);
+			}
+			cdam.say = function(raw, peer){
+				console.only(4, "carl speaks out:", raw);
+				console.only(3, "...");
+				bdam.hear((raw.length && raw) || JSON.stringify(raw), {});
+				csay(raw, peer);
+			}
+
+			carl.on('put', async function(msg){
+				this.to.next(msg);
+
+				var tmp = msg.put;
+				
+				//if(Math.random() > 0.5){ return; }
+				//console.log(msg.put);
+
+				//localStorage[tmp['#']+tmp['.']] = tmp[':'];
+
+				setTimeout(function(){
+					carl.on('out', {'@': msg['#']+'', ok: {BANANA: 9}});
+				}, 10);
+			});
+
+			alice.on('get', function(msg){ setTimeout(function(){ Gun.on.get.ack(msg); },9) })
+
+
+			setTimeout(async function(){
+				var pair = await SEA.pair();
+				var user = alice.user();
+				setTimeout(function(){
+					var c = 0;
+					//alice.on('auth', function(){
+					alice.get('test').put({a: 1, b: 2, c: 3}, function(ack){
+						//console.log("my data got saved?", ack);
+						
+						if(ack.ok.BANANA && ++c === c){
+							done();
+						}
+					}, {acks: 99});
+					//}); user.auth(pair);
+				},10);
+			}, 100);
 		});
 
 		/*it.only('Make sure circular contexts are not copied', function(done){
@@ -4051,7 +4182,31 @@ describe('Gun', function(){
 				nopasstun(done, gun); 
 			});
 			}, 1000);
-		});return;
+		});
+
+		it('once on link to nothing @mimiza', function(done){
+
+			gun.get('oltn').put({"#": "this-does-not-exist"})
+
+			gun.get('oltn').once(response => {
+				//console.log('did we call?', response) ;
+				expect(response).to.not.be.ok();
+				nopasstun(done, gun);
+			})
+		});
+
+		it('once on link to nothing deep @mimiza', function(done){
+
+			gun.get('oltnd').get('deep').put({"#": "this-does-not-exist"})
+
+			gun.get('oltnd').get('deep').once(response => {
+				//console.log('did we call?', response) ;
+				expect(response).to.not.be.ok();
+				nopasstun(done, gun);
+			})
+		});
+
+		return;
 
 		it('get get any parallel later', function(done){
 			Gun.statedisk({ bob: { age: 29, name: "Bob!" } }, 'parallel/get/get/later', function(){

@@ -1,13 +1,15 @@
+;(function(){
 
     var User = require('./user'), SEA = User.SEA, Gun = User.GUN, noop = function(){};
     // now that we have created a user, we want to authenticate them!
     User.prototype.auth = function(...args){ // TODO: this PR with arguments need to be cleaned up / refactored.
       var pair = typeof args[0] === 'object' && (args[0].pub || args[0].epub) ? args[0] : typeof args[1] === 'object' && (args[1].pub || args[1].epub) ? args[1] : null;
       var alias = !pair && typeof args[0] === 'string' ? args[0] : null;
-      var pass = alias && typeof args[1] === 'string' ? args[1] : null;
+      var pass = (alias || (pair && !(pair.priv && pair.epriv))) && typeof args[1] === 'string' ? args[1] : null;
       var cb = args.filter(arg => typeof arg === 'function')[0] || null; // cb now can stand anywhere, after alias/pass or pair
       var opt = args && args.length > 1 && typeof args[args.length-1] === 'object' ? args[args.length-1] : {}; // opt is always the last parameter which typeof === 'object' and stands after cb
-      
+      var retries = typeof opt.retries === 'number' ? opt.retries : 9;
+
       var gun = this, cat = (gun._), root = gun.back(-1);
       
       if(cat.ing){
@@ -30,6 +32,10 @@
         var get = (act.list = (act.list||[]).concat(list||[])).shift();
         if(u === get){
           if(act.name){ return act.err('Your user account is not published for dApps to access, please consider syncing it online, or allowing local access by adding your device as a peer.') }
+          if(alias && retries--){
+            root.get('~@'+alias).once(act.a);
+            return;
+          }
           return act.err('Wrong user or password.') 
         }
         root.get(get).once(act.a);
@@ -66,7 +72,7 @@
         at = user._ = root.get('~'+pair.pub)._;
         at.opt = upt;
         // add our credentials in-memory only to our root user instance
-        user.is = {pub: pair.pub, epub: pair.epub, alias: alias || pair};
+        user.is = {pub: pair.pub, epub: pair.epub, alias: alias || pair.pub};
         at.sea = act.pair;
         cat.ing = false;
         try{if(pass && u == (obj_ify(cat.root.graph['~'+pair.pub].auth)||'')[':']){ opt.shuffle = opt.change = pass; } }catch(e){} // migrate UTF8 & Shuffle!
@@ -74,7 +80,7 @@
         if(SEA.window && ((gun.back('user')._).opt||opt).remember){
           // TODO: this needs to be modular.
           try{var sS = {};
-          sS = window.sessionStorage;
+          sS = SEA.window.sessionStorage; // TODO: FIX BUG putting on `.is`!
           sS.recall = true;
           sS.pair = JSON.stringify(pair); // auth using pair is more reliable than alias/pass
           }catch(e){}
@@ -87,6 +93,17 @@
         }catch(e){
           Gun.log("Your 'auth' callback crashed with:", e);
         }
+      }
+      act.h = function(data){
+        if(!data){ return act.b() }
+        alias = data.alias
+        if(!alias)
+          alias = data.alias = "~" + pair.pub        
+        if(!data.auth){
+          return act.g(pair);
+        }
+        pair = null;
+        act.c((act.data = data).auth);
       }
       act.z = function(){
         // password update so encrypt private key using new pwd + salt
@@ -124,7 +141,10 @@
         act.b(tmp);
       }
       if(pair){
-        act.g(pair);
+        if(pair.priv && pair.epriv)
+          act.g(pair);
+        else
+          root.get('~'+pair.pub).once(act.h);
       } else
       if(alias){
         root.get('~@'+alias).once(act.a);
@@ -141,3 +161,4 @@
       return o;
     }
   
+}());

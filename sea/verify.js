@@ -1,3 +1,4 @@
+;(function(){
 
     var SEA = require('./root');
     var shim = require('./shim');
@@ -40,7 +41,7 @@
     }});
 
     module.exports = SEA.verify;
-    // legacy & ossl leak mitigation:
+    // legacy & ossl memory leak mitigation:
 
     var knownKeys = {};
     var keyForPair = SEA.opt.slow_leak = pair => {
@@ -78,3 +79,4 @@
     SEA.opt.fallback = 2;
 
   
+}());

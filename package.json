@@ -1,6 +1,6 @@
 {
   "name": "gun",
-  "version": "0.2020.1234",
+  "version": "0.2020.1239",
   "description": "A realtime, decentralized, offline-first, graph data synchronization engine.",
   "types": "index.d.ts",
   "main": "index.js",
@@ -18,6 +18,7 @@
     "docker": "hooks/build",
     "minify": "uglifyjs gun.js -o gun.min.js -c -m",
     "unbuild": "node lib/unbuild.js & npm run minify",
+    "unbuildSea": "node lib/unbuild.js sea",
     "unbuildMeta": "node lib/unbuild.js lib/meta"
   },
   "repository": {
@@ -61,14 +62,13 @@
     "ws": "^7.2.1"
   },
   "optionalDependencies": {
-    "@peculiar/webcrypto": "^1.1.1",
-    "text-encoding": "^0.7.0",
-    "emailjs": "^2.2.0"
+    "@peculiar/webcrypto": "^1.1.1"
   },
   "devDependencies": {
-    "aws-sdk": "^2.528.0",
-    "ip": "^1.1.5",
     "mocha": "^6.2.0",
+    "ip": "^1.1.5",
+    "aws-sdk": "^2.528.0",
+    "emailjs": "^2.2.0",
     "uglify-js": "^3.6.0"
   }
 }
